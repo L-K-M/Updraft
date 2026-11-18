@@ -4,7 +4,8 @@ In-app update checks against GitHub Releases, shared by the L-K-M macOS apps.
 
 Updraft replaces the GitHub-Releases update checker that was copied between
 the apps. `UpdraftCore` holds the Foundation-only model, client and
-downloader and builds and tests on Linux; `UpdraftKit` adds the AppKit
+downloader and builds and tests on Linux (where the SHA-256 digest check is
+skipped for lack of CryptoKit); `UpdraftKit` adds the AppKit
 `UpdateChecker` that schedules checks, remembers the user's choices and
 presents the alerts.
 
@@ -189,6 +190,10 @@ the source copies it cites.
 - The queued checkNow behaviour and the download-failure alert were already in
   Lucerne and stay.
 - The background throttle moves from the full interval to 90%.
+- Lucerne passes `currentVersion:` itself, with its
+  `AboutWindowController.fallbackVersion` fallback. The package's default reads
+  `CFBundleShortVersionString` and falls back to `"0"`, which would offer every
+  release as an update to a build without that key.
 
 ### Wrapybara and Vervellum
 

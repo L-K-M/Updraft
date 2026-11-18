@@ -26,3 +26,9 @@
   alerts and Top Drawer's throttle fraction, RepoMen's main-actor flag flip and
   Zap's format-string-safe background logging.
 - Add `Bundle` display-name and short-version helpers from the shared copies.
+- Treat the release data as untrusted beyond what any copy did: Download and
+  Open Release Page only open this repository's github.com release pages (any
+  other `html_url` falls back to the repository's releases page), asset URLs
+  must use the default HTTPS port, saved file names lose leading dots and are
+  capped at 200 bytes, the file is quarantined before it reaches Downloads,
+  and version strings are shortened in alerts.

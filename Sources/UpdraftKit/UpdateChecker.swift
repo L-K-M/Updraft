@@ -356,7 +356,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         }
         let alert = NSAlert()
         alert.messageText = "A new version of \(configuration.appName) is available"
-        var info = "\(configuration.appName) \(remote) is available — you have \(current)."
+        var info = "\(configuration.appName) \(Self.displayed(remote.description)) is available — you have \(current)."
         if let notes = release.releaseNotes() { info += "\n\n\(notes)" }
         alert.informativeText = info
         alert.addButton(withTitle: "Download")           // .alertFirstButtonReturn
@@ -368,7 +368,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
             if configuration.autoDownloadAssets {
                 downloadAndReveal(release)
             } else {
-                NSWorkspace.shared.open(release.htmlURL)
+                openReleasePage(release)
             }
         case .alertThirdButtonReturn:
             skippedVersion = release.tagName
@@ -383,13 +383,13 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
     @MainActor
     private func downloadAndReveal(_ release: GitHubRelease) {
         guard let asset = release.preferredAsset(using: configuration.assetSelection) else {
-            NSWorkspace.shared.open(release.htmlURL)
+            openReleasePage(release)
             return
         }
         // A second Download click while a download runs gets the same
         // fallback as every other failure here — never a silent no-op.
         guard !isDownloading else {
-            NSWorkspace.shared.open(release.htmlURL)
+            openReleasePage(release)
             return
         }
         isDownloading = true
@@ -416,7 +416,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         alert.addButton(withTitle: "Open Release Page")
         alert.addButton(withTitle: "Cancel")
         if runModal(alert) == .alertFirstButtonReturn {
-            NSWorkspace.shared.open(release.htmlURL)
+            openReleasePage(release)
         }
     }
 
@@ -437,7 +437,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Couldn't compare versions"
-        alert.informativeText = "The \(label) '\(value)' is not a valid semantic version."
+        alert.informativeText = "The \(label) '\(Self.displayed(value))' is not a valid semantic version."
         alert.addButton(withTitle: "OK")
         _ = runModal(alert)
     }
@@ -470,6 +470,48 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         }
         alert.window.level = configuration.alertWindowLevel
         return alert.runModal()
+    }
+
+    /// Opens the release page — never an arbitrary URL from the API response.
+    @MainActor
+    private func openReleasePage(_ release: GitHubRelease) {
+        guard let page = Self.releasePageURL(for: release.htmlURL, owner: configuration.owner,
+                                             repo: configuration.repo) else { return }
+        NSWorkspace.shared.open(page)
+    }
+
+    // MARK: Untrusted release data
+
+    /// Longest version string an alert shows. Tags come from the API response,
+    /// and a crafted one can be megabytes long.
+    static let maxDisplayedVersionLength = 64
+
+    /// `value` shortened for an alert.
+    static func displayed(_ value: String) -> String {
+        guard value.count > maxDisplayedVersionLength else { return value }
+        return String(value.prefix(maxDisplayedVersionLength)) + "…"
+    }
+
+    /// The page the Download and Open Release Page buttons open. `htmlURL` comes
+    /// from the untrusted API response, unlike every other URL the checker
+    /// touches it would otherwise be opened unchecked, so it is kept only when
+    /// it is an HTTPS github.com page of this repository; anything else is
+    /// replaced by the repository's releases page.
+    static func releasePageURL(for htmlURL: URL, owner: String, repo: String) -> URL? {
+        let repositoryPrefix = "/\(owner)/\(repo)/".lowercased()
+        if htmlURL.scheme?.lowercased() == "https",
+           htmlURL.host?.lowercased() == "github.com",
+           htmlURL.port == nil || htmlURL.port == 443,
+           htmlURL.user == nil, htmlURL.password == nil,
+           !htmlURL.pathComponents.contains(".."),
+           (htmlURL.path.lowercased() + "/").hasPrefix(repositoryPrefix) {
+            return htmlURL
+        }
+        var releases = URLComponents()
+        releases.scheme = "https"
+        releases.host = "github.com"
+        releases.path = "/\(owner)/\(repo)/releases"
+        return releases.url
     }
 
     // MARK: Helpers

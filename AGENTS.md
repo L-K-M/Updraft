@@ -29,8 +29,9 @@ and desktop apps (Zap, Jetty, Invoque, Top Drawer, Gans, RepoMen, Lucerne).
   failures.
 - **Version strings are untrusted input.** An unparseable tag or installed
   version is reported as such, never as "up to date".
-- Background checks must not steal focus: an update found while the app is
-  inactive waits until the app is next activated.
+- Apps that run as menu-bar agents set `deferWhileInactive`, so an update found
+  by a background check while the app is inactive waits until the app is next
+  activated instead of stealing focus.
 
 ## Versioning and consumers
 

@@ -218,6 +218,35 @@ final class UpdateDownloaderTests: XCTestCase {
             URL(string: "HTTPS://GitHub.com/asset.dmg")!))
     }
 
+    func testAllowedDownloadURLRejectsNonStandardPorts() {
+        XCTAssertTrue(UpdateDownloader.isAllowedDownloadURL(
+            URL(string: "https://github.com:443/asset.dmg")!))
+        XCTAssertFalse(UpdateDownloader.isAllowedDownloadURL(
+            URL(string: "https://github.com:8443/asset.dmg")!))
+        XCTAssertFalse(UpdateDownloader.isAllowedDownloadURL(
+            URL(string: "https://github.com@evil.example/asset.dmg")!))
+    }
+
+    /// A leading dot would hide the download in Finder, so the reveal after
+    /// a successful download would show nothing.
+    func testSanitizedFileNameDropsLeadingDots() {
+        XCTAssertEqual(UpdateDownloader.sanitizedFileName(".App.dmg", fallback: "update"),
+                       "App.dmg")
+        XCTAssertEqual(UpdateDownloader.sanitizedFileName("...dmg", fallback: "update"), "dmg")
+        XCTAssertEqual(UpdateDownloader.sanitizedFileName(" .App.dmg", fallback: "update"),
+                       "App.dmg")
+    }
+
+    /// File systems cap a name at 255 bytes; an over-long asset name must
+    /// still leave room for the "-N" collision suffix and keep its extension.
+    func testSanitizedFileNameCapsLengthAndKeepsExtension() {
+        let long = String(repeating: "é", count: 300) + ".dmg"
+        let name = UpdateDownloader.sanitizedFileName(long, fallback: "update")
+        XCTAssertLessThanOrEqual(name.utf8.count, UpdateDownloader.maxFileNameBytes)
+        XCTAssertTrue(name.hasSuffix(".dmg"))
+        XCTAssertTrue(name.hasPrefix("éé"))
+    }
+
     // MARK: Download flow
 
     func testRejectsNonHTTPSAssetWithoutStartingDownload() async {
@@ -479,5 +508,40 @@ final class UpdateDownloaderTests: XCTestCase {
         XCTAssertTrue(value.hasPrefix("0081;"), "unexpected quarantine value: \(value)")
         XCTAssertTrue(value.components(separatedBy: ";").count >= 3)
     }
+
+    /// The temporary file is quarantined before it is moved into place, so a
+    /// crash between the move and the stamp can't leave an unquarantined
+    /// payload in Downloads.
+    func testTemporaryFileIsQuarantinedBeforeTheMove() async throws {
+        let fm = FileManager.default
+        let dir = try makeDirectory("quarantine-before-move")
+        defer { try? fm.removeItem(at: dir) }
+
+        let tempURL = dir.appendingPathComponent("download.tmp")
+        try Data("payload".utf8).write(to: tempURL)
+        let observer = MoveObservingFileManager()
+        let destination = dir.appendingPathComponent("destination")
+        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        let downloader = UpdateDownloader(session: StubSession(tempURL: tempURL, statusCode: 200, responseURL: nil),
+                                          fileManager: observer)
+        _ = try await downloader.download(
+            asset(url: "https://github.com/x/App.dmg", size: 7), to: destination)
+
+        XCTAssertEqual(observer.sourceWasQuarantined, true,
+                       "the file must carry com.apple.quarantine before it reaches Downloads")
+    }
     #endif
 }
+
+#if canImport(Darwin)
+/// Records whether the source of a move already carries the quarantine
+/// attribute at the moment it is moved.
+private final class MoveObservingFileManager: FileManager, @unchecked Sendable {
+    var sourceWasQuarantined: Bool?
+
+    override func moveItem(at srcURL: URL, to dstURL: URL) throws {
+        sourceWasQuarantined = getxattr(srcURL.path, "com.apple.quarantine", nil, 0, 0, 0) > 0
+        try super.moveItem(at: srcURL, to: dstURL)
+    }
+}
+#endif

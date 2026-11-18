@@ -13,8 +13,9 @@ import CryptoKit
 /// the update flow), picking a non-colliding filename and verifying what
 /// arrived: every URL the download passes through — the initial URL, each
 /// redirect hop, and the URL the response came from — must be HTTPS on a GitHub
-/// host, the size must match the API's `size`, and when the API supplied a
-/// `sha256:` digest the file's SHA-256 must match it.
+/// host, the size must match the API's `size`, and on Apple platforms, when the
+/// API supplied a `sha256:` digest, the file's SHA-256 must match it (Linux has
+/// no CryptoKit, so the digest is not checked there).
 public struct UpdateDownloader {
 
     public enum DownloadError: LocalizedError {
@@ -48,6 +49,11 @@ public struct UpdateDownloader {
         "github.com", "api.github.com", "codeload.github.com",
         "objects.githubusercontent.com", "release-assets.githubusercontent.com",
     ]
+
+    /// Longest file name, in UTF-8 bytes, the downloader writes. File systems
+    /// cap a name at 255 bytes; the margin leaves room for the "-N" suffix
+    /// `uniqueDestination` adds on a collision.
+    static let maxFileNameBytes = 200
 
     /// Remembers the redirect target the session vetoed, so the refusal can be
     /// reported by URL: a refused hop ends the task with the bare 3xx response,
@@ -101,15 +107,17 @@ public struct UpdateDownloader {
         guard Self.isAllowedDownloadURL(url) else {
             throw DownloadError.insecureURL(url)
         }
-        // The downloader is reused across checks; clear any earlier refusal first.
-        redirectGate?.reset()
+        // The gate is shared by every download on the default session, so its
+        // refusals are keyed by the URL each download started from; clear any
+        // stale one for this URL first.
+        redirectGate?.takeRefusal(for: url)
         let (tempURL, response) = try await session.downloadAsset(from: url)
         var removeTemporaryFile = true
         defer {
             if removeTemporaryFile { try? fileManager.removeItem(at: tempURL) }
         }
 
-        if let refused = redirectGate?.refused {
+        if let refused = redirectGate?.takeRefusal(for: url) {
             throw DownloadError.insecureURL(refused)
         }
         guard let http = response as? HTTPURLResponse else {
@@ -133,6 +141,14 @@ public struct UpdateDownloader {
                 throw DownloadError.digestMismatch(expected: expected, actual: actual)
             }
         }
+        #endif
+
+        // Quarantine the verified file before it reaches the destination, so no
+        // crash or failure between the move and the stamp can leave an
+        // unquarantined payload there. The stamp is repeated after the move in
+        // case a cross-volume move dropped the attribute.
+        #if canImport(Darwin)
+        Self.applyQuarantine(to: tempURL)
         #endif
 
         let fileName = Self.sanitizedFileName(asset.name, fallback: fallbackFileName)
@@ -159,10 +175,12 @@ public struct UpdateDownloader {
         throw CocoaError(.fileWriteFileExists)
     }
 
-    /// Whether `url` may serve a release asset: HTTPS on an allowlisted host.
+    /// Whether `url` may serve a release asset: HTTPS on an allowlisted host and
+    /// the default port.
     public static func isAllowedDownloadURL(_ url: URL) -> Bool {
         url.scheme?.lowercased() == "https"
             && url.host.map { allowedHosts.contains($0.lowercased()) } == true
+            && (url.port == nil || url.port == 443)
     }
 
     /// Rejects truncated or unexpectedly enlarged downloads before they leave
@@ -201,17 +219,34 @@ public struct UpdateDownloader {
 
     /// GitHub asset names should be filenames, but sanitize defensively before
     /// writing into the destination directory so path separators and control
-    /// characters never matter. Falls back when nothing usable remains.
+    /// characters never matter. Leading dots are dropped (a hidden file would
+    /// make the reveal after a successful download show nothing) and the name
+    /// is capped at `maxFileNameBytes`, keeping a short extension. Falls back
+    /// when nothing usable remains.
     public static func sanitizedFileName(_ fileName: String, fallback: String) -> String {
         let candidate = (fileName as NSString).lastPathComponent
         let filtered = candidate.unicodeScalars.map { scalar in
             CharacterSet.controlCharacters.contains(scalar) ? "-" : String(scalar)
         }.joined()
-        let trimmed = filtered.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed != ".", trimmed != "..", trimmed != "/" else {
-            return fallback
+        var trimmed = filtered.trimmingCharacters(in: .whitespacesAndNewlines)
+        while trimmed.hasPrefix(".") { trimmed.removeFirst() }
+        trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "/" else { return fallback }
+        return cappedFileName(trimmed)
+    }
+
+    /// `name` shortened to `maxFileNameBytes` UTF-8 bytes, cutting whole
+    /// characters from the end of the base name so the extension survives.
+    private static func cappedFileName(_ name: String) -> String {
+        guard name.utf8.count > maxFileNameBytes else { return name }
+        let pathExtension = (name as NSString).pathExtension
+        let keepsExtension = !pathExtension.isEmpty && pathExtension.utf8.count <= 16
+        let suffix = keepsExtension ? "." + pathExtension : ""
+        var base = keepsExtension ? (name as NSString).deletingPathExtension : name
+        while !base.isEmpty, base.utf8.count + suffix.utf8.count > maxFileNameBytes {
+            base.removeLast()
         }
-        return trimmed
+        return base + suffix
     }
 
     #if canImport(CryptoKit)
@@ -259,23 +294,21 @@ public struct UpdateDownloader {
     #endif
 
     /// Session delegate that applies the asset host policy to every redirect hop.
-    /// Every access to `refusedTarget` is lock-protected, so the class is
-    /// explicitly `@unchecked Sendable` rather than implicitly non-Sendable.
+    /// Refused targets are keyed by the task's original URL, so concurrent
+    /// downloads on the shared session never see each other's refusals. Every
+    /// access to `refusedTargets` is lock-protected, so the class is explicitly
+    /// `@unchecked Sendable` rather than implicitly non-Sendable.
     private final class RedirectGate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         private let lock = NSLock()
-        private var refusedTarget: URL?
+        private var refusedTargets: [URL: URL] = [:]
 
-        /// The redirect target the gate refused, if any (read after the task ends).
-        var refused: URL? {
+        /// Returns and forgets the redirect target refused for a download that
+        /// started at `originalURL`, if any (read after the task ends).
+        @discardableResult
+        func takeRefusal(for originalURL: URL) -> URL? {
             lock.lock()
             defer { lock.unlock() }
-            return refusedTarget
-        }
-
-        func reset() {
-            lock.lock()
-            refusedTarget = nil
-            lock.unlock()
+            return refusedTargets.removeValue(forKey: originalURL)
         }
 
         func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -283,9 +316,12 @@ public struct UpdateDownloader {
                         newRequest request: URLRequest,
                         completionHandler: @escaping (URLRequest?) -> Void) {
             guard let target = request.url, UpdateDownloader.isAllowedDownloadURL(target) else {
-                lock.lock()
-                refusedTarget = request.url
-                lock.unlock()
+                if let original = task.originalRequest?.url {
+                    lock.lock()
+                    // A refusal with no target URL still has to be reported.
+                    refusedTargets[original] = request.url ?? original
+                    lock.unlock()
+                }
                 completionHandler(nil)  // refuse: the task ends with the 3xx response
                 return
             }

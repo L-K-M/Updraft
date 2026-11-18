@@ -410,4 +410,35 @@ final class UpdateCheckerTests: XCTestCase {
             owner: "L-K-M", repo: "Zap", appName: "Zap", currentVersion: "1.0")
         XCTAssertEqual(configuration.downloadFallbackFileName, "Zap-update")
     }
+
+    // MARK: Untrusted release data
+
+    /// `html_url` comes from the untrusted API response; only this
+    /// repository's GitHub release pages may be opened.
+    func testReleasePageURLAcceptsOnlyThisRepositoryOnGitHub() {
+        let page = { (raw: String) in
+            UpdateChecker.releasePageURL(for: URL(string: raw)!, owner: "L-K-M", repo: "Zap")
+        }
+        let fallback = URL(string: "https://github.com/L-K-M/Zap/releases")!
+        let good = URL(string: "https://github.com/L-K-M/Zap/releases/tag/v1.2.0")!
+        XCTAssertEqual(page(good.absoluteString), good)
+        XCTAssertEqual(page("https://GitHub.com/l-k-m/zap/releases/tag/v1.2.0"),
+                       URL(string: "https://GitHub.com/l-k-m/zap/releases/tag/v1.2.0")!)
+        XCTAssertEqual(page("https://evil.example/L-K-M/Zap/releases/tag/v1.2.0"), fallback)
+        XCTAssertEqual(page("http://github.com/L-K-M/Zap/releases/tag/v1.2.0"), fallback)
+        XCTAssertEqual(page("https://github.com/someone-else/Zap/releases/tag/v1.2.0"), fallback)
+        XCTAssertEqual(page("https://github.com/L-K-M/Zapper/releases/tag/v1.2.0"), fallback)
+        XCTAssertEqual(page("https://github.com:8443/L-K-M/Zap/releases/tag/v1.2.0"), fallback)
+        XCTAssertEqual(page("https://github.com@evil.example/L-K-M/Zap/releases"), fallback)
+        XCTAssertEqual(page("file:///Applications/Calculator.app"), fallback)
+    }
+
+    /// A crafted multi-megabyte tag must not reach an alert unabridged.
+    func testDisplayedVersionIsCapped() {
+        let long = "1.0.0-" + String(repeating: "a", count: 10_000)
+        let shown = UpdateChecker.displayed(long)
+        XCTAssertLessThanOrEqual(shown.count, UpdateChecker.maxDisplayedVersionLength + 1)
+        XCTAssertTrue(shown.hasSuffix("…"))
+        XCTAssertEqual(UpdateChecker.displayed("1.2.3"), "1.2.3")
+    }
 }
