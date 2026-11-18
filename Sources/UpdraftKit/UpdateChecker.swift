@@ -54,6 +54,10 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         /// Brings the app forward before an alert runs modally. `nil` uses
         /// `NSApp.activate()`. Zap and Invoque pass their own activator.
         public var activateForAlert: (() -> Void)?
+        /// Runs once an alert has closed, before its button is acted on. Zap and
+        /// Invoque pass the second half of their activation handoff here, so
+        /// focus returns to the app the user was in.
+        public var restoreAfterAlert: (() -> Void)?
         /// When true, an update found by a background check while the app is
         /// inactive is queued and shown on the next activation instead of
         /// stealing focus. Menu-bar agents need this; frontmost apps don't.
@@ -73,6 +77,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
                     downloadFallbackFileName: String? = nil,
                     alertWindowLevel: NSWindow.Level = .floating,
                     activateForAlert: (() -> Void)? = nil,
+                    restoreAfterAlert: (() -> Void)? = nil,
                     deferWhileInactive: Bool = false) {
             self.owner = owner
             self.repo = repo
@@ -88,6 +93,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
             self.downloadFallbackFileName = downloadFallbackFileName ?? "\(appName)-update"
             self.alertWindowLevel = alertWindowLevel
             self.activateForAlert = activateForAlert
+            self.restoreAfterAlert = restoreAfterAlert
             self.deferWhileInactive = deferWhileInactive
         }
     }
@@ -457,7 +463,13 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
     /// with no Dock icon to click.
     @MainActor
     private func runModal(_ alert: NSAlert) -> NSApplication.ModalResponse {
-        if let alertSink { return alertSink(alert) }
+        if let alertSink {
+            // Tests have no NSApp to activate, so only the app's own hooks run.
+            configuration.activateForAlert?()
+            let response = alertSink(alert)
+            configuration.restoreAfterAlert?()
+            return response
+        }
         // Under XCTest a real modal would block the run loop forever — answer
         // "Remind Me Later" so check flows can still be exercised end-to-end.
         guard !TestEnvironment.isRunningTests else { return .alertSecondButtonReturn }
@@ -469,7 +481,9 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
             NSApp.activate(ignoringOtherApps: true)
         }
         alert.window.level = configuration.alertWindowLevel
-        return alert.runModal()
+        let response = alert.runModal()
+        configuration.restoreAfterAlert?()
+        return response
     }
 
     /// Opens the release page — never an arbitrary URL from the API response.

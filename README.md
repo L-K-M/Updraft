@@ -15,9 +15,9 @@ Released into the public domain; see `LICENSE`.
 
 | App | Adoption | Notes |
 |---|---|---|
-| Zap | UpdraftKit, downloads | passes its own alert activator |
+| Zap | UpdraftKit, downloads | passes its own alert activator and restore hook |
 | Jetty | UpdraftKit, downloads | passes `popUpMenu + 1` as the alert window level |
-| Invoque | UpdraftKit, downloads | passes `deferWhileInactive: true` and its own activator |
+| Invoque | UpdraftKit, downloads | passes `deferWhileInactive: true`, its own activator and restore hook |
 | Top Drawer | UpdraftKit, downloads | owner `L-K-M`, repo `MacDring`, app name `Top Drawer` |
 | Lucerne | UpdraftKit, downloads | split-arch releases need the architecture-aware selection |
 | Gans | UpdraftKit, `autoDownloadAssets: false` | never downloads, stores or launches a binary |
@@ -140,8 +140,9 @@ the source copies it cites.
   skipped day.
 - The unparseable-version alert now distinguishes the installed version from
   the release tag.
-- Invoque passes `deferWhileInactive: true` and its own activator, preserving
-  the queued status-menu update.
+- Invoque passes `deferWhileInactive: true`, its own activator and its
+  restore hook, preserving the queued status-menu update and handing focus
+  back to the previous app after an alert.
 
 ### Top Drawer
 

@@ -94,6 +94,14 @@ final class UpdateCheckerTests: XCTestCase {
         }
     }
 
+    /// A thread-safe list of named events.
+    private final class EventLog: @unchecked Sendable {
+        private let lock = NSLock()
+        private var events: [String] = []
+        var all: [String] { lock.lock(); defer { lock.unlock() }; return events }
+        func append(_ event: String) { lock.lock(); events.append(event); lock.unlock() }
+    }
+
     /// Records presented alerts and answers with a configurable button.
     private final class AlertRecorder: @unchecked Sendable {
         private let lock = NSLock()
@@ -307,6 +315,26 @@ final class UpdateCheckerTests: XCTestCase {
     }
 
     // MARK: Alerts
+
+    /// Zap and Invoque hand activation back to the previously active app once
+    /// an alert closes; the hooks run around every alert, in order.
+    func testAlertRunsBetweenActivateAndRestoreHooks() async throws {
+        let events = EventLog()
+        let checker = UpdateChecker(
+            configuration: .init(owner: "test", repo: "test", appName: "Test", currentVersion: "1.0",
+                                 activateForAlert: { events.append("activate") },
+                                 restoreAfterAlert: { events.append("restore") }),
+            defaults: defaults, client: StubReleaseClient(release: try release(tag: "1.0")))
+        checker.alertSink = { _ in
+            events.append("alert")
+            return .alertFirstButtonReturn
+        }
+
+        checker.checkNow()
+        let shown = await waitFor { events.all.count == 3 }
+        XCTAssertTrue(shown)
+        XCTAssertEqual(events.all, ["activate", "alert", "restore"])
+    }
 
     func testCheckNowReportsUpToDate() async throws {
         let client = StubReleaseClient(release: try release(tag: "1.0"))

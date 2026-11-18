@@ -26,6 +26,9 @@
   alerts and Top Drawer's throttle fraction, RepoMen's main-actor flag flip and
   Zap's format-string-safe background logging.
 - Add `Bundle` display-name and short-version helpers from the shared copies.
+- `Configuration.activateForAlert` and `restoreAfterAlert` run around every
+  alert, so Zap and Invoque keep handing focus back to the app the user was in
+  once an update alert closes.
 - Treat the release data as untrusted beyond what any copy did: Download and
   Open Release Page only open this repository's github.com release pages (any
   other `html_url` falls back to the repository's releases page), asset URLs
