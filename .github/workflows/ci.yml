@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A check needs only source read access; superseded PR runs can be canceled.
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  macos:
+    # The consumers build with Xcode 16 (macOS 15 SDK) and Xcode 26 (macOS 26
+    # SDK). Test both so a symbol from either SDK can't break the other.
+    name: macOS (Xcode ${{ matrix.xcode }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            xcode: '16.4'
+          - runner: macos-26
+            xcode: '26.0'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: ${{ matrix.xcode }}
+      - run: swift --version
+      - run: bash -n scripts/build.sh scripts/release.sh
+      - run: swift test
+      - run: swift build -c release
+
+  linux:
+    # The UpdraftCore target is Foundation-only and must keep building on Linux.
+    name: Linux (UpdraftCore)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: swift:6.3-noble
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # SwiftPM shells out to git; the container's uid differs from the
+      # checkout's owner, and git refuses to touch it until it is marked safe.
+      - run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      - run: swift build
+      - run: swift test
