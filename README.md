@@ -233,7 +233,7 @@ the source copies it cites.
 - Version parsing and pre-release ordering were already the same as
   Updraft's; nothing changes there.
 - Assets with an unknown extension, or a name that names another OS, are
-  never offered.
+  never offered, and the host architecture is matched as a whole token.
 - Downloads gain the redirect host allowlist, SHA-256 verification, the
   always-on size check, quarantine stamping and the move-retry race fix.
 - A failed download shows an alert offering the release page instead of
