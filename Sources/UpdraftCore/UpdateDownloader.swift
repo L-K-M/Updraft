@@ -34,7 +34,10 @@ public struct UpdateDownloader {
             case .sizeMismatch(let expected, let actual):
                 return "The downloaded update failed its size check (expected \(expected) bytes, received \(actual))."
             case .digestMismatch(let expected, let actual):
-                return "SHA-256 mismatch: expected \(expected), got \(actual). The download was tampered with."
+                // `expected` comes from the API response; keep a crafted
+                // megabyte-long value out of the alert.
+                let shownExpected = expected.count > 80 ? expected.prefix(80) + "…" : expected
+                return "SHA-256 mismatch: expected \(shownExpected), got \(actual). The download was tampered with."
             case .noUniqueFileName(let directory, let fileName, let attempts):
                 return "Couldn't find an unused name for \(fileName) in \(directory) after \(attempts) attempts."
             }
@@ -228,9 +231,16 @@ public struct UpdateDownloader {
         let filtered = candidate.unicodeScalars.map { scalar in
             CharacterSet.controlCharacters.contains(scalar) ? "-" : String(scalar)
         }.joined()
-        var trimmed = filtered.trimmingCharacters(in: .whitespacesAndNewlines)
-        while trimmed.hasPrefix(".") { trimmed.removeFirst() }
-        trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Trimming can expose another leading dot (". .dmg"), so alternate the
+        // two until neither changes the name. That also makes the result
+        // stable when `uniqueDestination` sanitizes it again.
+        var trimmed = filtered
+        var previous: String
+        repeat {
+            previous = trimmed
+            trimmed = trimmed.trimmingCharacters(in: .whitespacesAndNewlines)
+            while trimmed.hasPrefix(".") { trimmed.removeFirst() }
+        } while trimmed != previous
         guard !trimmed.isEmpty, trimmed != "/" else { return fallback }
         return cappedFileName(trimmed)
     }
@@ -295,7 +305,9 @@ public struct UpdateDownloader {
 
     /// Session delegate that applies the asset host policy to every redirect hop.
     /// Refused targets are keyed by the task's original URL, so concurrent
-    /// downloads on the shared session never see each other's refusals. Every
+    /// downloads of different assets never see each other's refusals. Two
+    /// concurrent downloads of the *same* URL share an entry: both still fail,
+    /// but one may report the bare 3xx instead of the refused URL. Every
     /// access to `refusedTargets` is lock-protected, so the class is explicitly
     /// `@unchecked Sendable` rather than implicitly non-Sendable.
     private final class RedirectGate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

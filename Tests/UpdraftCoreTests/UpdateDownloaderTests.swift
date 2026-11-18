@@ -237,6 +237,30 @@ final class UpdateDownloaderTests: XCTestCase {
                        "App.dmg")
     }
 
+    /// Stripping dots and trimming whitespace alternate until neither changes
+    /// the name, so a trim can't re-expose a leading dot, and sanitizing an
+    /// already sanitized name changes nothing (`uniqueDestination` sanitizes
+    /// again).
+    func testSanitizedFileNameIsStableAndNeverHidden() {
+        XCTAssertEqual(UpdateDownloader.sanitizedFileName(". .dmg", fallback: "update"), "dmg")
+        XCTAssertEqual(UpdateDownloader.sanitizedFileName(". . .", fallback: "update"), "update")
+        for raw in [". .dmg", ". . .", " . App.zip", "App.dmg", "..", "x/. .y.pkg",
+                    String(repeating: "é", count: 300) + ".dmg"] {
+            let once = UpdateDownloader.sanitizedFileName(raw, fallback: "update")
+            XCTAssertFalse(once.hasPrefix("."), "\(raw) -> \(once)")
+            XCTAssertEqual(UpdateDownloader.sanitizedFileName(once, fallback: "update"), once,
+                           "sanitizing \(raw) twice must not change it again")
+        }
+    }
+
+    /// The digest comes from the API response; a crafted megabyte-long one
+    /// must not reach the failure alert unabridged.
+    func testDigestMismatchDescriptionIsBounded() {
+        let error = UpdateDownloader.DownloadError.digestMismatch(
+            expected: String(repeating: "a", count: 100_000), actual: String(repeating: "b", count: 64))
+        XCTAssertLessThan(error.errorDescription?.count ?? .max, 400)
+    }
+
     /// File systems cap a name at 255 bytes; an over-long asset name must
     /// still leave room for the "-N" collision suffix and keep its extension.
     func testSanitizedFileNameCapsLengthAndKeepsExtension() {
