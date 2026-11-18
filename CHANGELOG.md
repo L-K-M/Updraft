@@ -35,3 +35,6 @@
   must use the default HTTPS port, saved file names lose leading dots and are
   capped at 200 bytes, the file is quarantined before it reaches Downloads,
   and version strings are shortened in alerts.
+- `Configuration.offersReleasePageForInvalidVersions` makes the "Couldn't
+  compare versions" alert offer Open Release Page and Cancel instead of OK.
+  Top Drawer turns it on to keep the button its own checker had.

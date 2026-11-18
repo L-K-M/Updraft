@@ -18,7 +18,7 @@ Released into the public domain; see `LICENSE`.
 | Zap | UpdraftKit, downloads | passes its own alert activator and restore hook |
 | Jetty | UpdraftKit, downloads | passes `popUpMenu + 1` as the alert window level |
 | Invoque | UpdraftKit, downloads | passes `deferWhileInactive: true`, its own activator and restore hook |
-| Top Drawer | UpdraftKit, downloads | owner `L-K-M`, repo `MacDring`, app name `Top Drawer` |
+| Top Drawer | UpdraftKit, downloads | owner `L-K-M`, repo `MacDring`, app name `Top Drawer`; passes `offersReleasePageForInvalidVersions: true` |
 | Lucerne | UpdraftKit, downloads | split-arch releases need the architecture-aware selection |
 | Gans | UpdraftKit, `autoDownloadAssets: false` | never downloads, stores or launches a binary |
 | RepoMen | UpdraftKit, `autoDownloadAssets: false` | never downloads; opens the release page |
@@ -155,6 +155,10 @@ the source copies it cites.
 - A click on Check for Updates during a background check is now queued and
   reported.
 - The throttle was already 90% and stays the default.
+- The "Couldn't compare versions" alert keeps its release-page button
+  (`offersReleasePageForInvalidVersions: true`), now titled Open Release Page
+  like the download-failure alert, and names the string it couldn't read. The
+  page it opens is validated like every other release page.
 
 ### Gans
 

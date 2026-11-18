@@ -62,6 +62,10 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         /// inactive is queued and shown on the next activation instead of
         /// stealing focus. Menu-bar agents need this; frontmost apps don't.
         public var deferWhileInactive: Bool
+        /// When true, the "Couldn't compare versions" alert offers **Open
+        /// Release Page** and **Cancel** instead of a lone OK, so the user can
+        /// look for a newer release by hand. Top Drawer's own checker did this.
+        public var offersReleasePageForInvalidVersions: Bool
 
         public init(owner: String,
                     repo: String,
@@ -78,7 +82,8 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
                     alertWindowLevel: NSWindow.Level = .floating,
                     activateForAlert: (() -> Void)? = nil,
                     restoreAfterAlert: (() -> Void)? = nil,
-                    deferWhileInactive: Bool = false) {
+                    deferWhileInactive: Bool = false,
+                    offersReleasePageForInvalidVersions: Bool = false) {
             self.owner = owner
             self.repo = repo
             self.appName = appName
@@ -95,6 +100,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
             self.activateForAlert = activateForAlert
             self.restoreAfterAlert = restoreAfterAlert
             self.deferWhileInactive = deferWhileInactive
+            self.offersReleasePageForInvalidVersions = offersReleasePageForInvalidVersions
         }
     }
 
@@ -118,6 +124,10 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
     /// Test seam: when set, alerts are handed here instead of running modally,
     /// so tests can inspect the copy and choose a button.
     var alertSink: ((NSAlert) -> NSApplication.ModalResponse)?
+
+    /// Test seam: opens a validated release page. Tests replace it so that
+    /// choosing a release-page button never launches the browser.
+    var openURL: (URL) -> Void = { url in _ = NSWorkspace.shared.open(url) }
 
     /// Called when `pendingUpdateTag` changes (tag name, or nil once presented).
     /// `AppDelegate` mirrors it onto a status-menu item so a queued update is
@@ -278,13 +288,13 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
                     if report { self.presentUpToDate() }
                 case let .invalidCurrent(value):
                     if report {
-                        self.presentInvalidVersion(label: "installed version", value: value)
+                        self.presentInvalidVersion(label: "installed version", value: value, release: release)
                     } else {
                         self.logger.log("UpdateChecker: couldn't compare versions: the installed version '\(value)' is not a valid semantic version.")
                     }
                 case let .invalidRemote(value):
                     if report {
-                        self.presentInvalidVersion(label: "release tag", value: value)
+                        self.presentInvalidVersion(label: "release tag", value: value, release: release)
                     } else {
                         self.logger.log("UpdateChecker: couldn't compare versions: the release tag '\(value)' is not a valid semantic version.")
                     }
@@ -335,7 +345,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
         // unparseable rather than vanish.
         guard let remote = SemanticVersion(release.tagName),
               let current = SemanticVersion(configuration.currentVersion) else {
-            presentInvalidVersion(label: "release tag", value: release.tagName)
+            presentInvalidVersion(label: "release tag", value: release.tagName, release: release)
             return
         }
         presentUpdateAvailable(release: release, remote: remote, current: current)
@@ -439,13 +449,23 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
     /// from "up to date", which would wrongly assert the user is current when
     /// the answer is unknown, and precise about which string failed.
     @MainActor
-    private func presentInvalidVersion(label: String, value: String) {
+    private func presentInvalidVersion(label: String, value: String, release: GitHubRelease) {
         let alert = NSAlert()
         alert.alertStyle = .warning
         alert.messageText = "Couldn't compare versions"
-        alert.informativeText = "The \(label) '\(Self.displayed(value))' is not a valid semantic version."
-        alert.addButton(withTitle: "OK")
-        _ = runModal(alert)
+        let problem = "The \(label) '\(Self.displayed(value))' is not a valid semantic version."
+        guard configuration.offersReleasePageForInvalidVersions else {
+            alert.informativeText = problem
+            alert.addButton(withTitle: "OK")
+            _ = runModal(alert)
+            return
+        }
+        alert.informativeText = problem + " Open the release page to see whether a newer version is available."
+        alert.addButton(withTitle: "Open Release Page")
+        alert.addButton(withTitle: "Cancel")
+        if runModal(alert) == .alertFirstButtonReturn {
+            openReleasePage(release)
+        }
     }
 
     @MainActor
@@ -491,7 +511,7 @@ public final class UpdateChecker: ObservableObject, @unchecked Sendable {
     private func openReleasePage(_ release: GitHubRelease) {
         guard let page = Self.releasePageURL(for: release.htmlURL, owner: configuration.owner,
                                              repo: configuration.repo) else { return }
-        NSWorkspace.shared.open(page)
+        openURL(page)
     }
 
     // MARK: Untrusted release data

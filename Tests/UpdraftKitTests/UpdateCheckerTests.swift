@@ -107,9 +107,11 @@ final class UpdateCheckerTests: XCTestCase {
         private let lock = NSLock()
         private var messages: [String] = []
         private var info: [String] = []
+        private var buttons: [[String]] = []
         var response: NSApplication.ModalResponse = .alertSecondButtonReturn
         var messageTexts: [String] { lock.lock(); defer { lock.unlock() }; return messages }
         var informativeTexts: [String] { lock.lock(); defer { lock.unlock() }; return info }
+        var buttonTitles: [[String]] { lock.lock(); defer { lock.unlock() }; return buttons }
         var count: Int { lock.lock(); defer { lock.unlock() }; return messages.count }
         func makeSink() -> (NSAlert) -> NSApplication.ModalResponse {
             { [weak self] alert in
@@ -117,6 +119,7 @@ final class UpdateCheckerTests: XCTestCase {
                 self.lock.lock()
                 self.messages.append(alert.messageText)
                 self.info.append(alert.informativeText)
+                self.buttons.append(alert.buttons.map(\.title))
                 let response = self.response
                 self.lock.unlock()
                 return response
@@ -127,13 +130,25 @@ final class UpdateCheckerTests: XCTestCase {
     private func makeChecker(client: any ReleaseFetching,
                              deferWhileInactive: Bool = true,
                              throttleFraction: Double = 0.9,
-                             currentVersion: String = "1.0") -> UpdateChecker {
-        UpdateChecker(
+                             currentVersion: String = "1.0",
+                             offersReleasePageForInvalidVersions: Bool = false) -> UpdateChecker {
+        let checker = UpdateChecker(
             configuration: .init(owner: "test", repo: "test",
                                  appName: "Test", currentVersion: currentVersion,
                                  throttleFraction: throttleFraction,
-                                 deferWhileInactive: deferWhileInactive),
+                                 deferWhileInactive: deferWhileInactive,
+                                 offersReleasePageForInvalidVersions: offersReleasePageForInvalidVersions),
             defaults: defaults, client: client)
+        checker.openURL = { url in XCTFail("unexpected open of \(url)") }
+        return checker
+    }
+
+    /// Records the URLs a checker asked to open.
+    private final class OpenedURLs: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage: [URL] = []
+        var all: [URL] { lock.lock(); defer { lock.unlock() }; return storage }
+        func append(_ url: URL) { lock.lock(); storage.append(url); lock.unlock() }
     }
 
     /// Polls until `condition` holds or ~1 s elapses — `performCheck` hops to
@@ -374,6 +389,44 @@ final class UpdateCheckerTests: XCTestCase {
         XCTAssertEqual(recorder.messageTexts.first, "Couldn't compare versions")
         XCTAssertEqual(recorder.informativeTexts.first,
                        "The release tag 'latest' is not a valid semantic version.")
+        XCTAssertEqual(recorder.buttonTitles.first, ["OK"])
+    }
+
+    func testInvalidVersionAlertCanOfferTheReleasePage() async throws {
+        let client = StubReleaseClient(release: try release(tag: "latest"))
+        let checker = makeChecker(client: client, offersReleasePageForInvalidVersions: true)
+        let opened = OpenedURLs()
+        checker.openURL = { opened.append($0) }
+        let recorder = AlertRecorder()
+        recorder.response = .alertFirstButtonReturn
+        checker.alertSink = recorder.makeSink()
+
+        checker.checkNow()
+        let didOpen = await waitFor { !opened.all.isEmpty }
+        XCTAssertTrue(didOpen)
+        XCTAssertEqual(recorder.messageTexts.first, "Couldn't compare versions")
+        XCTAssertEqual(recorder.informativeTexts.first,
+                       "The release tag 'latest' is not a valid semantic version."
+                       + " Open the release page to see whether a newer version is available.")
+        XCTAssertEqual(recorder.buttonTitles.first, ["Open Release Page", "Cancel"])
+        // The fixture's html_url is not on github.com, so the validated
+        // fallback opens instead.
+        XCTAssertEqual(opened.all, [URL(string: "https://github.com/test/test/releases")!])
+    }
+
+    func testCancellingTheReleasePageOfferOpensNothing() async throws {
+        let client = StubReleaseClient(release: try release(tag: "2.0.0"))
+        let checker = makeChecker(client: client, currentVersion: "broken",
+                                  offersReleasePageForInvalidVersions: true)
+        let recorder = AlertRecorder()
+        checker.alertSink = recorder.makeSink()  // answers the second button, Cancel
+
+        checker.checkNow()
+        let done = await waitFor { recorder.count > 0 && !checker.isChecking }
+        XCTAssertTrue(done)
+        XCTAssertEqual(recorder.buttonTitles.first, ["Open Release Page", "Cancel"])
+        XCTAssertTrue(recorder.informativeTexts.first?
+            .hasPrefix("The installed version 'broken' is not a valid semantic version.") ?? false)
     }
 
     func testBackgroundFailureIsNotPresented() async throws {
