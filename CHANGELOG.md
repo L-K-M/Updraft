@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+- `GitHubReleaseClient.ClientError` gains `rateLimited(resetsAt:)`. GitHub's
+  rate-limit answers (403 or 429 with no requests left, `retry-after`, or a
+  bare 429) used to surface as "GitHub returned HTTP 403." A user-initiated
+  check now says "GitHub is limiting requests from this network. Try again
+  after 15:45." (or "later" when GitHub gives no time). A 403 with requests
+  left is still reported as an HTTP error. Adding the case is
+  source-breaking for code that switches over `ClientError` exhaustively,
+  hence the minor version.
+- The prerelease scan (`latestRelease(includePrereleases: true)`) reads every
+  page of releases, 100 at a time and at most 10 pages, instead of only the
+  30 most recently created. GitHub lists releases by creation date, so a
+  higher-versioned release created earlier was missed and an older
+  prerelease could be offered as the newest. From Top Drawer's open PR #208.
+
+## 0.1.0
 
 - Add UpdraftCore with `SemanticVersion`, ported from Jetty (strict SemVer
   identifiers, overflow-safe section 11 pre-release ordering) and behaviourally

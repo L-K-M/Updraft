@@ -55,6 +55,14 @@ checker.checkNow()
 `GitHubReleaseClient`, `UpdateVersionComparison`, `UpdateDownloadSession` and
 `UpdateDownloader`.
 
+`GitHubReleaseClient` uses GitHub's unauthenticated API, which allows 60
+requests an hour per network. A stable-only check is one request. A check
+that includes prereleases reads the release list 100 at a time, up to 10
+pages, because GitHub orders it by creation date rather than by version.
+When GitHub refuses a request for exceeding the limit, the client throws
+`ClientError.rateLimited(resetsAt:)`, and a user-initiated check says when to
+try again instead of showing a bare HTTP 403.
+
 ## Persisted keys
 
 `UpdateChecker` stores its state in `UserDefaults` under a configurable prefix.
