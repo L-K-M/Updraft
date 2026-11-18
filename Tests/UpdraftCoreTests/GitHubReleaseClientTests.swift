@@ -130,6 +130,41 @@ final class GitHubReleaseClientNetworkTests: XCTestCase {
         XCTAssertEqual(stub.requestedURLs.count, budget)
     }
 
+    /// No releases at all: an empty first page is a short page, so the scan
+    /// stops after one request and surfaces as `noReleases`.
+    func testEmptyReleaseListThrowsNoReleases() async throws {
+        let stub = StubTransport([.init(status: 200)])
+
+        do {
+            _ = try await client(stub).latestRelease(includePrereleases: true)
+            XCTFail("expected noReleases")
+        } catch GitHubReleaseClient.ClientError.noReleases {
+            XCTAssertEqual(stub.requestedURLs.count, 1)
+        }
+    }
+
+    /// A limit answer on a later page aborts the scan rather than being read
+    /// as a short page or decoded as releases.
+    func testRateLimitOnALaterPageAbortsTheScan() async throws {
+        let perPage = GitHubReleaseClient.releasesPerPage
+        let full = (0..<perPage).map { "v1.0.\($0)" }
+        let stub = StubTransport([
+            .init(status: 200, body: page(full)),
+            .init(status: 403, headers: [
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "1900000000",
+            ]),
+        ])
+
+        do {
+            _ = try await client(stub).latestRelease(includePrereleases: true)
+            XCTFail("expected a rate-limit error")
+        } catch GitHubReleaseClient.ClientError.rateLimited(let resetsAt) {
+            XCTAssertEqual(resetsAt, Date(timeIntervalSince1970: 1_900_000_000))
+            XCTAssertEqual(stub.requestedURLs.count, 2)
+        }
+    }
+
     func testStableCheckUsesTheLatestEndpointOnly() async throws {
         let latest = #"{"tag_name":"v3.1.0","html_url":"https://example.com/r","prerelease":false,"draft":false,"assets":[]}"#
         let stub = StubTransport([.init(status: 200, body: Data(latest.utf8))])
@@ -144,8 +179,8 @@ final class GitHubReleaseClientNetworkTests: XCTestCase {
     /// window. The reset time comes from `x-ratelimit-reset` (epoch seconds).
     func testExhaustedRateLimitIsReportedWithItsResetTime() async throws {
         let stub = StubTransport([.init(status: 403, headers: [
-            "X-RateLimit-Remaining": "0",
-            "X-RateLimit-Reset": "1900000000",
+            "x-ratelimit-remaining": "0",
+            "x-ratelimit-reset": "1900000000",
         ])])
 
         do {
@@ -158,7 +193,7 @@ final class GitHubReleaseClientNetworkTests: XCTestCase {
 
     /// GitHub's secondary limits answer with `retry-after` (seconds).
     func testRetryAfterIsReportedAsARateLimit() async throws {
-        let stub = StubTransport([.init(status: 429, headers: ["Retry-After": "120"])])
+        let stub = StubTransport([.init(status: 429, headers: ["retry-after": "120"])])
         let before = Date()
 
         do {
@@ -185,7 +220,7 @@ final class GitHubReleaseClientNetworkTests: XCTestCase {
     /// A 403 that is not about the rate limit (requests remain) stays an
     /// ordinary HTTP error, not a misleading "try again later".
     func testForbiddenWithRequestsLeftIsABadResponse() async throws {
-        let stub = StubTransport([.init(status: 403, headers: ["X-RateLimit-Remaining": "12"])])
+        let stub = StubTransport([.init(status: 403, headers: ["x-ratelimit-remaining": "12"])])
 
         do {
             _ = try await client(stub).latestRelease(includePrereleases: false)

@@ -31,9 +31,10 @@ public struct GitHubReleaseClient: ReleaseFetching {
         case badResponse(Int)
         case noReleases
         case invalidURL
-        /// GitHub refused the request because this network used up its
-        /// unauthenticated allowance. `resetsAt` is when GitHub says to try
-        /// again, if it said.
+        /// GitHub refused the request because of rate limiting: the primary
+        /// unauthenticated allowance ran out, or a secondary limit answered
+        /// with `retry-after`. `resetsAt` is when GitHub says to try again,
+        /// if it said.
         case rateLimited(resetsAt: Date?)
 
         public var errorDescription: String? {
