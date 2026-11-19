@@ -5,7 +5,8 @@ Guidance for AI coding agents working in the **Updraft** repository.
 ## What Updraft Is
 
 The "is there a newer release on GitHub?" checker shared by the L-K-M menu-bar
-and desktop apps (Zap, Jetty, Invoque, Top Drawer, Gans, RepoMen, Lucerne).
+and desktop apps (Zap, Jetty, Invoque, Top Drawer, Gans, RepoMen, Lucerne,
+Vervellum, Wrapybara).
 
 - `UpdraftCore` (Foundation only, builds on Linux): `SemanticVersion`,
   `GitHubRelease`, `GitHubReleaseClient`, `UpdateVersionComparison` and

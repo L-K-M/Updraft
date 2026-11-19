@@ -22,8 +22,8 @@ Released into the public domain; see `LICENSE`.
 | Lucerne | UpdraftKit, downloads | split-arch releases need the architecture-aware selection |
 | Gans | UpdraftKit, `autoDownloadAssets: false` | never downloads, stores or launches a binary |
 | RepoMen | UpdraftKit, `autoDownloadAssets: false` | never downloads; opens the release page |
-| Wrapybara | keeps its copy | its `AGENTS.md` forbids packages |
-| Vervellum | keeps its copy | its `AGENTS.md` forbids packages |
+| Vervellum | UpdraftKit, downloads | macOS app only; passes its user agent and `.modalPanel` as the alert window level |
+| Wrapybara | UpdraftKit, downloads | passes `popUpMenu + 1` as the alert window level; links Updraft statically into the builder |
 
 ## API overview
 
@@ -208,7 +208,42 @@ the source copies it cites.
   `CFBundleShortVersionString` and falls back to `"0"`, which would offer every
   release as an update to a build without that key.
 
-### Wrapybara and Vervellum
+### Vervellum
 
-Their `AGENTS.md` files forbid packages, so they keep their current copies and
-see no change.
+- Version parsing and pre-release ordering were already the same as
+  Updraft's; nothing changes there.
+- Assets with an unknown extension, or a name that names another OS, are
+  never offered, and the host architecture is matched as a whole token.
+- Downloads gain the redirect host allowlist, SHA-256 verification, the
+  always-on size check, quarantine stamping and the move-retry race fix.
+- A failed download shows an alert offering the release page instead of
+  opening the page without saying why.
+- Skip-this-version compares parsed versions and survives a retag.
+- A click on Check for Updates during a background check is now queued and
+  reported.
+- The background throttle moves from the full interval to 90%.
+- Vervellum passes its own `Vervellum/<version>` user agent and
+  `alertWindowLevel: .modalPanel`, so an alert stays above its floating
+  research panel.
+- Only the macOS app uses Updraft. The Linux build never checked for updates
+  and is unchanged.
+
+### Wrapybara
+
+- Version parsing and pre-release ordering were already the same as
+  Updraft's; nothing changes there.
+- Assets with an unknown extension, or a name that names another OS, are
+  never offered, and the host architecture is matched as a whole token.
+- Downloads gain the redirect host allowlist, SHA-256 verification, the
+  always-on size check, quarantine stamping and the move-retry race fix.
+- A failed download shows an alert offering the release page instead of
+  opening the page without saying why.
+- Skip-this-version compares parsed versions and survives a retag.
+- A click on Check for Updates during a background check is now queued and
+  reported.
+- The background throttle moves from the full interval to 90%.
+- Wrapybara passes `popUpMenu + 1` as the alert window level, so an alert
+  can never end up behind the element picker's overlay or a sheet.
+- The site apps Wrapybara generates copy only its main executable and never
+  check for updates. Wrapybara therefore links the package statically (into
+  the app target only), so nothing lands in `Contents/Frameworks`.
